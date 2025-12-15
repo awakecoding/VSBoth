@@ -1,0 +1,41 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+
+# Visual Studio files
+*.log
+*.tlog
+*.ilk
+*.pdb
+*.ipdb
+*.obj
+*.iobj
+*.pch
+*.tmp
+*.vspscc
+*.vssscc
+
+# NuGet
+packages/
+*.nuget.props
+*.nuget.targets
+
+# VS Extension specific
+*.vsix
+*.pkgundef
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
