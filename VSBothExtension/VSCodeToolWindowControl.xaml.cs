@@ -13,7 +13,7 @@ using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Package = Microsoft.VisualStudio.Shell.Package;
 
-namespace VSExtension
+namespace VSBothExtension
 {
     public partial class VSCodeToolWindowControl : System.Windows.Controls.UserControl
     {
@@ -106,6 +106,9 @@ namespace VSExtension
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
 
@@ -129,11 +132,14 @@ namespace VSExtension
         private const int WS_THICKFRAME = 0x00040000;
         private const int WS_MINIMIZEBOX = 0x00020000;
         private const int WS_MAXIMIZEBOX = 0x00010000;
+        private const int WS_SYSMENU = 0x00080000;
 
         private const int SW_RESTORE = 9;
         private const int SW_HIDE = 0;
         private const int SW_SHOW = 5;
 
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOZORDER = 0x0004;
         private const uint SWP_NOACTIVATE = 0x0010;
         private const uint SWP_FRAMECHANGED = 0x0020;
@@ -188,16 +194,15 @@ namespace VSExtension
                 ShowWindow(hwnd, SW_HIDE);
                 SetParent(hwnd, _hostPanel!.Handle);
 
-                int style = GetWindowLong(hwnd, GWL_STYLE);
-                style &= ~WS_CAPTION;
-                style &= ~WS_THICKFRAME;
-                style &= ~WS_MINIMIZEBOX;
-                style &= ~WS_MAXIMIZEBOX;
-                style |= WS_CHILD;
-                SetWindowLong(hwnd, GWL_STYLE, style);
+                // Apply styles to the main window
+                RemoveResizableStyles(hwnd);
+
+                // Apply styles to all child windows recursively
+                FixAllChildWindowStyles(hwnd);
 
                 s_vsCodeHwnd = hwnd;
                 s_isInitialized = true;
+                
                 ResizeEmbeddedVsCode();
                 ShowWindow(hwnd, SW_SHOW);
             }
@@ -286,6 +291,41 @@ namespace VSExtension
             return IntPtr.Zero;
         }
 
+        private void FixAllChildWindowStyles(IntPtr parentHwnd)
+        {
+            EnumChildWindows(parentHwnd, (childHwnd, lParam) =>
+            {
+                RemoveResizableStyles(childHwnd);
+                // Recursively process grandchildren and deeper
+                FixAllChildWindowStyles(childHwnd);
+                return true;
+            }, IntPtr.Zero);
+        }
+
+        private void RemoveResizableStyles(IntPtr hwnd)
+        {
+            int style = GetWindowLong(hwnd, GWL_STYLE);
+            
+            // Only modify if it has WS_THICKFRAME (resizable border)
+            if ((style & WS_THICKFRAME) != 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"Removing WS_THICKFRAME from window {hwnd:X} (style was {style:X})");
+                
+                style &= ~WS_CAPTION;
+                style &= ~WS_THICKFRAME;
+                style &= ~WS_MINIMIZEBOX;
+                style &= ~WS_MAXIMIZEBOX;
+                style &= ~WS_SYSMENU;
+                SetWindowLong(hwnd, GWL_STYLE, style);
+
+                // Force Windows to update the window frame and remove resize cursors
+                SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0, 
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                
+                System.Diagnostics.Debug.WriteLine($"  New style: {GetWindowLong(hwnd, GWL_STYLE):X}");
+            }
+        }
+
         private void ResizeEmbeddedVsCode()
         {
             if (s_vsCodeHwnd == IntPtr.Zero || _hostPanel == null)
@@ -331,15 +371,28 @@ namespace VSExtension
         // Call this when Visual Studio is closing to actually terminate VS Code
         public static void ShutdownVSCode()
         {
-            if (s_vsCodeHwnd != IntPtr.Zero)
+            if (s_vsCodeHwnd != IntPtr.Zero && IsWindow(s_vsCodeHwnd))
             {
                 try
                 {
-                    ShowWindow(s_vsCodeHwnd, SW_HIDE);
+                    // Get the actual process ID from the window handle
+                    GetWindowThreadProcessId(s_vsCodeHwnd, out uint processId);
+                    
+                    // Kill the specific VS Code process by PID
+                    var vsCodeProcess = System.Diagnostics.Process.GetProcessById((int)processId);
+                    if (vsCodeProcess != null && !vsCodeProcess.HasExited)
+                    {
+                        vsCodeProcess.Kill();
+                        vsCodeProcess.Dispose();
+                    }
                 }
-                catch { }
+                catch
+                {
+                    // Process might already be gone
+                }
             }
 
+            // Also try to clean up the launcher process if it's still around
             if (s_vsCodeProcess != null && !s_vsCodeProcess.HasExited)
             {
                 try

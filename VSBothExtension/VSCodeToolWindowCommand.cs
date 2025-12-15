@@ -4,7 +4,7 @@ using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Task = System.Threading.Tasks.Task;
 
-namespace VSExtension
+namespace VSBothExtension
 {
     internal sealed class VSCodeToolWindowCommand
     {
